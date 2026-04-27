@@ -1,0 +1,8 @@
+[
+{
+  "directory": "C:/Users/mcbbs/Desktop/Vulkan_Development/cmake-build",
+  "command": "C:\\msys64\\ucrt64\\bin\\g++.exe -DGLFW_DLL -isystem C:/VulkanSDK/1.4.341.1/include -g -std=gnu++20 -o CMakeFiles\\main.dir\\src\\main.cpp.obj -c C:\\Users\\mcbbs\\Desktop\\Vulkan_Development\\src\\main.cpp",
+  "file": "C:/Users/mcbbs/Desktop/Vulkan_Development/src/main.cpp",
+  "output": "C:/Users/mcbbs/Desktop/Vulkan_Development/cmake-build/CMakeFiles/main.dir/src/main.cpp.obj"
+}
+]

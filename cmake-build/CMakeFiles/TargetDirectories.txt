@@ -1,0 +1,4 @@
+C:/Users/mcbbs/Desktop/Vulkan_Development/cmake-build/CMakeFiles/CompileShaders.dir
+C:/Users/mcbbs/Desktop/Vulkan_Development/cmake-build/CMakeFiles/main.dir
+C:/Users/mcbbs/Desktop/Vulkan_Development/cmake-build/CMakeFiles/edit_cache.dir
+C:/Users/mcbbs/Desktop/Vulkan_Development/cmake-build/CMakeFiles/rebuild_cache.dir

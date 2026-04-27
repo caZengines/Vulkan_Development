@@ -1,0 +1,9 @@
+# ninja log v7
+9	540	7976117948795217	CMakeFiles/main.dir/src/main.cpp.obj.ddi	b7793a4e3130ca49
+7	76	7976119386580046	CMakeFiles/main.dir/CXX.dd	6eb2cd1b0ddb77c8
+7	76	7976119386580046	CMakeFiles/main.dir/CXXModules.json	6eb2cd1b0ddb77c8
+7	76	7976119386580046	CMakeFiles/main.dir/src/main.cpp.obj.modmap	6eb2cd1b0ddb77c8
+32	6663	7987916192143971	CMakeFiles/main.dir/src/main.cpp.obj	2f76b72c58f39e9a
+6666	7295	7987916258389761	C:/Users/mcbbs/Desktop/Vulkan_Development/bin/main.exe	314409e015d2613a
+9	83	7977059997652184	C:/Users/mcbbs/Desktop/Vulkan_Development/shaders	c6e9bf0bce8b75da
+7	198	7984850034369556	C:/Users/mcbbs/Desktop/Vulkan_Development/shaders/slang.spv	260de5321a4b189b
