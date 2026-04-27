@@ -262,10 +262,14 @@ class HelloTriangleApplication {
 
             vk::MemoryAllocateInfo memoryAllocateInfo;
             memoryAllocateInfo.setAllocationSize(memoryRequirements.size)
-                              .setMemoryTypeIndex(findMemoryType(memoryRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent));
+                              .setMemoryTypeIndex(findMemoryType(memoryRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | 
+                                                                                                                                               vk::MemoryPropertyFlagBits::eHostCoherent));
             vertexBufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
-
             vertexBuffer.bindMemory(*vertexBufferMemory, 0);
+            
+            void* data = vertexBufferMemory.mapMemory(0, bufferInfo.size);
+            memcpy(data, vertices.data(), bufferInfo.size);
+            vertexBufferMemory.unmapMemory();
         }
 
         uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties){
@@ -320,10 +324,12 @@ class HelloTriangleApplication {
             commandBuffers[frameIndex].beginRendering(renderingInfo);
             //binding the graphics pipeline
             commandBuffers[frameIndex].bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
+            //binding the vertexbuffer
+            commandBuffers[frameIndex].bindVertexBuffers(0, *vertexBuffer, {0});
             //command buffer dynamic state
             commandBuffers[frameIndex].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapchainExtent.width),static_cast<float>(swapchainExtent.height), 0.0f, 0.0f));
             commandBuffers[frameIndex].setScissor(0, vk::Rect2D(vk::Offset2D(0,0), swapchainExtent));
-            commandBuffers[frameIndex].draw(3, 1, 0, 0);
+            commandBuffers[frameIndex].draw(vertices.size(), 1, 0, 0);
             //end rendering
             commandBuffers[frameIndex].endRendering();
             // After rendering, transition the swapchain image to vk::ImageLayout::ePresentSrcKHR
@@ -759,7 +765,7 @@ class HelloTriangleApplication {
           std::vector<char> buffer(file.tellg());
           file.seekg(0, std::ios::beg);
           file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-          if(!file.read(buffer.data(), buffer.size())){
+          if (!file) {
             throw std::runtime_error("Failed to read complete file content.");
           }
           file.close();

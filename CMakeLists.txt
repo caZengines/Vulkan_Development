@@ -30,7 +30,7 @@ add_custom_command(
         -entry fragMain
         -o ${SHADER_OUTPUT}
     DEPENDS ${SHADER_SOURCE}
-    COMMENT "Compiling Slang Shaders"
+    COMMENT "Compiling Slang shader to SPIR-V"
     VERBATIM
 )
 

@@ -121,7 +121,7 @@ build CMakeFiles/CompileShaders | ${cmake_ninja_workdir}CMakeFiles/CompileShader
 
 build C$:/Users/mcbbs/Desktop/Vulkan_Development/shaders/slang.spv: CUSTOM_COMMAND C$:/Users/mcbbs/Desktop/Vulkan_Development/shaders/shader.slang
   COMMAND = C:\Windows\system32\cmd.exe /C "cd /D C:\Users\mcbbs\Desktop\Vulkan_Development\cmake-build && C:\VulkanSDK\1.4.341.1\Bin\slangc.exe C:/Users/mcbbs/Desktop/Vulkan_Development/shaders/shader.slang -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry vertMain -entry fragMain -o C:/Users/mcbbs/Desktop/Vulkan_Development/shaders/slang.spv"
-  DESC = Compiling Slang Shaders
+  DESC = Compiling Slang shader to SPIR-V
   restat = 1
 
 # =============================================================================
