@@ -79,18 +79,21 @@ class HelloTriangleApplication {
         vk::raii::PhysicalDevice                 physicalDevice = nullptr;
         vk::raii::Device                         device         = nullptr;
         vk::raii::Queue                          graphicsQueue  = nullptr;
+        vk::raii::Queue                          transferQueue  = nullptr;
         vk::raii::SwapchainKHR                   swapChain      = nullptr;
         std::vector<vk::Image>                   swapchainImages;
         vk::SurfaceFormatKHR                     swapchainSurfaceFormat;
         vk::Extent2D                             swapchainExtent;
         std::vector<vk::raii::ImageView>         swapchainImageViews;
 
-        uint32_t                                 queueIndex       = ~0;
+        uint32_t                                 graphicsQueueIndex      = ~0;
+        uint32_t                                 transferQueueIndex      = ~0;
 
         vk::raii::PipelineLayout                 pipelineLayout   = nullptr;
         vk::raii::Pipeline                       graphicsPipeline = nullptr;
-        vk::raii::CommandPool                    commandPool      = nullptr;
-        std::vector<vk::raii::CommandBuffer>     commandBuffers;
+        vk::raii::CommandPool                    graphicsCommandPool      = nullptr;
+        vk::raii::CommandPool                    transientCommandPool     = nullptr;
+        std::vector<vk::raii::CommandBuffer>     graphicsCommandBuffer;
         vk::raii::Buffer                         vertexBuffer       = nullptr;
         vk::raii::DeviceMemory                   vertexBufferMemory = nullptr;
         uint32_t                                 frameIndex       = 0;
@@ -243,31 +246,69 @@ class HelloTriangleApplication {
         }
 
         void createCommandPool(){
-            vk::CommandPoolCreateInfo poolInfo;
-            poolInfo.setFlags(vk::CommandPoolCreateFlagBits::eResetCommandBuffer)
-                    .setQueueFamilyIndex(queueIndex);
-            commandPool = vk::raii::CommandPool(device, poolInfo);
+            vk::CommandPoolCreateInfo graphicsPoolInfo;
+            graphicsPoolInfo.setFlags(vk::CommandPoolCreateFlagBits::eResetCommandBuffer)
+                            .setQueueFamilyIndex(graphicsQueueIndex);
+            graphicsCommandPool = vk::raii::CommandPool(device, graphicsPoolInfo);
+            vk::CommandPoolCreateInfo transientPoolInfo;
+            transientPoolInfo.setFlags(vk::CommandPoolCreateFlagBits::eResetCommandBuffer | vk::CommandPoolCreateFlagBits::eTransient)
+                            .setQueueFamilyIndex(transferQueueIndex);
+            transientCommandPool = vk::raii::CommandPool(device, transientPoolInfo);
+        }
+
+        std::pair<vk::raii::Buffer, vk::raii::DeviceMemory> createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::SharingMode mode, const std::vector<uint32_t>& queueFamilyIndecies = {}){
+            vk::BufferCreateInfo bufferInfo;
+            bufferInfo.setSize(size).setUsage(usage).setSharingMode(mode);
+            if(mode == vk::SharingMode::eConcurrent){
+                bufferInfo.setQueueFamilyIndices(queueFamilyIndecies);
+            }
+            vk::raii::Buffer       buffer = vk::raii::Buffer(device, bufferInfo);
+            
+            vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
+            vk::MemoryAllocateInfo memAllocateInfo;
+            memAllocateInfo.setAllocationSize(memRequirements.size)
+                           .setMemoryTypeIndex(findMemoryType(memRequirements.memoryTypeBits, properties));
+                vk::raii::DeviceMemory bufferMemory = vk::raii::DeviceMemory(device, memAllocateInfo);
+            buffer.bindMemory(*bufferMemory, 0);
+            
+            return {std::move(buffer), std::move(bufferMemory)};
+        }
+
+        void copyBuffer(vk::raii::Buffer & srcBuffer, vk::raii::Buffer & desBuffer, vk::DeviceSize size){
+            vk::CommandBufferAllocateInfo allocInfo;
+            allocInfo.setCommandPool(transientCommandPool).setLevel(vk::CommandBufferLevel::ePrimary).setCommandBufferCount(1);
+            vk::raii::CommandBuffer commandCopyBuffer = std::move(device.allocateCommandBuffers(allocInfo).front());
+            //record command
+            commandCopyBuffer.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+            commandCopyBuffer.copyBuffer(*srcBuffer, *desBuffer, vk::BufferCopy(0, 0, size));
+            commandCopyBuffer.end();
+            //wait for submit
+            vk::FenceCreateInfo fenceInfo;
+            vk::raii::Fence transferFence(device, fenceInfo);
+
+            transferQueue.submit(vk::SubmitInfo().setCommandBuffers(*commandCopyBuffer), *transferFence);
+            (void)device.waitForFences({*transferFence}, VK_TRUE, UINT64_MAX);
         }
 
         void createVertexBuffers(){
-            vk::BufferCreateInfo bufferInfo;
-            bufferInfo.setSize(sizeof(vertices[0]) * vertices.size())
-                      .setUsage(vk::BufferUsageFlagBits::eVertexBuffer)
-                      .setSharingMode(vk::SharingMode::eExclusive);
-            vertexBuffer = vk::raii::Buffer(device, bufferInfo);
-            //allocate memory
-            vk::MemoryRequirements memoryRequirements = vertexBuffer.getMemoryRequirements();
-
-            vk::MemoryAllocateInfo memoryAllocateInfo;
-            memoryAllocateInfo.setAllocationSize(memoryRequirements.size)
-                              .setMemoryTypeIndex(findMemoryType(memoryRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | 
-                                                                                                                                               vk::MemoryPropertyFlagBits::eHostCoherent));
-            vertexBufferMemory = vk::raii::DeviceMemory(device, memoryAllocateInfo);
-            vertexBuffer.bindMemory(*vertexBufferMemory, 0);
+            vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+            auto [stagingBuffer, stagingBufferMemory] = 
+                        createBuffer(bufferSize, 
+                                    vk::BufferUsageFlagBits::eTransferSrc, 
+                                    vk::MemoryPropertyFlagBits::eHostCoherent | vk::MemoryPropertyFlagBits::eHostVisible, 
+                                    vk::SharingMode::eExclusive);
             
-            void* data = vertexBufferMemory.mapMemory(0, bufferInfo.size);
-            memcpy(data, vertices.data(), bufferInfo.size);
-            vertexBufferMemory.unmapMemory();
+            void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
+            memcpy(dataStaging, vertices.data(), bufferSize);
+            stagingBufferMemory.unmapMemory();
+
+            std::tie(vertexBuffer, vertexBufferMemory) = 
+                        createBuffer(bufferSize,
+                                     vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+                                     vk::MemoryPropertyFlagBits::eDeviceLocal,
+                                     vk::SharingMode::eConcurrent,
+                                    {graphicsQueueIndex, transferQueueIndex});
+            copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
         }
 
         uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties){
@@ -282,15 +323,15 @@ class HelloTriangleApplication {
 
         void createCommandBuffers(){
             vk::CommandBufferAllocateInfo allocInfo;
-             allocInfo.setCommandPool(commandPool)
+             allocInfo.setCommandPool(*graphicsCommandPool)
                       .setLevel(vk::CommandBufferLevel::ePrimary)
                       .setCommandBufferCount(MAX_FRAMES_IN_FLIGHT);
             
-            commandBuffers = vk::raii::CommandBuffers(device, allocInfo);
+                graphicsCommandBuffer = vk::raii::CommandBuffers(device, allocInfo);
         }
 
         void recordCommandBuffer(uint32_t ImageIndex){
-            commandBuffers[frameIndex].begin({});
+            graphicsCommandBuffer[frameIndex].begin({});
 
             // Before starting rendering, transition the swapchain image to vk::ImageLayout::eColorAttachmentOptimal
             transition_image_layout(
@@ -319,17 +360,17 @@ class HelloTriangleApplication {
                          .setColorAttachments(attachmentInfo);
 
             //start rendering
-            commandBuffers[frameIndex].beginRendering(renderingInfo);
+            graphicsCommandBuffer[frameIndex].beginRendering(renderingInfo);
             //binding the graphics pipeline
-            commandBuffers[frameIndex].bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
+            graphicsCommandBuffer[frameIndex].bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
             //binding the vertexbuffer
-            commandBuffers[frameIndex].bindVertexBuffers(0, *vertexBuffer, {0});
+            graphicsCommandBuffer[frameIndex].bindVertexBuffers(0, *vertexBuffer, {0});
             //command buffer dynamic state
-            commandBuffers[frameIndex].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapchainExtent.width),static_cast<float>(swapchainExtent.height), 0.0f, 0.0f));
-            commandBuffers[frameIndex].setScissor(0, vk::Rect2D(vk::Offset2D(0,0), swapchainExtent));
-            commandBuffers[frameIndex].draw(vertices.size(), 1, 0, 0);
+            graphicsCommandBuffer[frameIndex].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapchainExtent.width),static_cast<float>(swapchainExtent.height), 0.0f, 0.0f));
+            graphicsCommandBuffer[frameIndex].setScissor(0, vk::Rect2D(vk::Offset2D(0,0), swapchainExtent));
+            graphicsCommandBuffer[frameIndex].draw(vertices.size(), 1, 0, 0);
             //end rendering
-            commandBuffers[frameIndex].endRendering();
+            graphicsCommandBuffer[frameIndex].endRendering();
             // After rendering, transition the swapchain image to vk::ImageLayout::ePresentSrcKHR
             transition_image_layout(
                 ImageIndex,
@@ -341,7 +382,7 @@ class HelloTriangleApplication {
                 vk::PipelineStageFlagBits2::eBottomOfPipe           // dstStage
             );
             
-            commandBuffers[frameIndex].end();
+            graphicsCommandBuffer[frameIndex].end();
         }
         void transition_image_layout(uint32_t                imageIndex,
                                      vk::ImageLayout         old_layout,
@@ -372,7 +413,7 @@ class HelloTriangleApplication {
                                     vk::DependencyInfo dependency_info;
                                     dependency_info.setDependencyFlags({})
                                                    .setImageMemoryBarriers(barrier);
-                                    commandBuffers[frameIndex].pipelineBarrier2(dependency_info);
+                                    graphicsCommandBuffer[frameIndex].pipelineBarrier2(dependency_info);
                                 }
 
         void createSyncObjects(){
@@ -563,7 +604,7 @@ class HelloTriangleApplication {
             }
             //Only reset the fence if we are submitting work
             device.resetFences(*inFlightFences[frameIndex]);
-            commandBuffers[frameIndex].reset();
+            graphicsCommandBuffer[frameIndex].reset();
             recordCommandBuffer(imageIndex);
 
             uint64_t signalValue = ++frameCount;
@@ -583,7 +624,7 @@ class HelloTriangleApplication {
               vk::SubmitInfo info;
               info.setWaitSemaphores(*presentCompleteSemaphores[frameIndex])
                   .setWaitDstStageMask(waitDestinationStageMask)
-                  .setCommandBuffers(*commandBuffers[frameIndex])
+                  .setCommandBuffers(*graphicsCommandBuffer[frameIndex])
                   .setSignalSemaphores(signalSemaphores)
                   .setPNext(&timelineSubmitInfo);
               return info;
@@ -687,13 +728,21 @@ class HelloTriangleApplication {
                                                                     { return (qfp.queueFlags & vk::QueueFlagBits::eGraphics) != static_cast<vk::QueueFlags>(0); });
             if(graphicsQueueFamilyProperty != queueFamilyProperties.end()){
                 auto graphicIndex = static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(), graphicsQueueFamilyProperty));
-                queueIndex = graphicIndex;
+                graphicsQueueIndex = graphicIndex;
             }
-            if(queueIndex == ~0) throw std::runtime_error("Could not find a queue for graphics and present -> terminating");
+            if(graphicsQueueIndex == ~0) throw std::runtime_error("Could not find a queue for graphics and present -> terminating");
+            //find the index of the first queue family that supports transfer queue
+            auto transferQueueFamilyProperty = std::ranges::find_if(queueFamilyProperties, [&](const auto& qfp){ 
+                                                                        if(&qfp == &queueFamilyProperties[graphicsQueueIndex]) return false;
+                                                                        return (qfp.queueFlags & vk::QueueFlagBits::eTransfer) != static_cast<vk::QueueFlags>(0); 
+                                                                    });
+            if(transferQueueFamilyProperty != queueFamilyProperties.end()){
+                auto transferIndex = static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(), transferQueueFamilyProperty));
+                transferQueueIndex = transferIndex;
+            }
+            if(transferQueueIndex == ~0) throw std::runtime_error("Could not find a queue for transfer");
 
             //enabledPhysicalDeviceFeatures
-            vk::PhysicalDeviceFeatures deviceFeatures;
-            deviceFeatures.setFillModeNonSolid(true);
             vk::StructureChain<vk::PhysicalDeviceFeatures2,
                                vk::PhysicalDeviceVulkan13Features,
                                vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
@@ -701,29 +750,39 @@ class HelloTriangleApplication {
                                vk::PhysicalDeviceTimelineSemaphoreFeaturesKHR> featureChain;
             auto& deviceFeatures2 = featureChain.get<vk::PhysicalDeviceFeatures2>();
             deviceFeatures2.features.setFillModeNonSolid(true);
+            deviceFeatures2.features.setGeometryShader(false);
 
             featureChain.get<vk::PhysicalDeviceVulkan13Features>().setDynamicRendering(true);  // vk::PhysicalDeviceVulkan13Features
             featureChain.get<vk::PhysicalDeviceVulkan13Features>().setSynchronization2(true);
             featureChain.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().setExtendedDynamicState(true);  // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
             featureChain.get<vk::PhysicalDeviceShaderDrawParametersFeatures>().setShaderDrawParameters(true);
             featureChain.get<vk::PhysicalDeviceTimelineSemaphoreFeaturesKHR>().setTimelineSemaphore(true); //vk::PhysicalDeviceTimelineSemaphoreFeaturesKHR
-
+            //Create graphic & transfer queue
             std::vector<const char *> requiredDeviceExtension = {vk::KHRSwapchainExtensionName};
+            std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos;
             float queuePriority = 0.5f;
-            vk::DeviceQueueCreateInfo deviceQueueCreateInfo;
-            deviceQueueCreateInfo.setQueueFamilyIndex(queueIndex)
+            vk::DeviceQueueCreateInfo graphicQueueCreateInfo;
+            graphicQueueCreateInfo.setQueueFamilyIndex(graphicsQueueIndex)
                                  .setQueueCount(1)
                                  .setPQueuePriorities(&queuePriority);
+                queueCreateInfos.emplace_back(graphicQueueCreateInfo);
+            vk::DeviceQueueCreateInfo transferQueueCreateInfo;
+            transferQueueCreateInfo.setQueueFamilyIndex(transferQueueIndex)
+                                   .setQueueCount(1)
+                                   .setPQueuePriorities(&queuePriority);
+                queueCreateInfos.emplace_back(transferQueueCreateInfo);
 
             vk::DeviceCreateInfo deviceCreateInfo;
             deviceCreateInfo.setPNext(&featureChain.get<vk::PhysicalDeviceFeatures2>())
-                            .setQueueCreateInfos(deviceQueueCreateInfo)
+                            .setQueueCreateInfos(queueCreateInfos)
                             .setEnabledExtensionCount(static_cast<uint32_t>(requiredDeviceExtension.size()))
                             .setPpEnabledExtensionNames(requiredDeviceExtension.data());
 
             device = vk::raii::Device(physicalDevice, deviceCreateInfo);
 
-            graphicsQueue = vk::raii::Queue(device, queueIndex, 0);
+            graphicsQueue = vk::raii::Queue(device, graphicsQueueIndex, 0);
+
+            transferQueue = vk::raii::Queue(device, transferQueueIndex, 0);
         }
 
         void createSurface()
