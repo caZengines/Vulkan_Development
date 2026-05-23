@@ -34,6 +34,8 @@ add_custom_command(
     VERBATIM
 )
 
+add_compile_options(-I ${PROJECT_SOURCE_DIR}/include)
+
 add_custom_target(CompileShaders ALL
     DEPENDS ${SHADER_OUTPUT}
 )
