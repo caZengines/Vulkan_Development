@@ -1,7 +1,7 @@
 struct VertexInPut {
     float2 inPosition;
     float3 inColor;
-}
+};
 
 struct UniformBuffer {
     float4x4 model;

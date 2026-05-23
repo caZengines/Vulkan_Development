@@ -60,9 +60,9 @@ struct Vertex {
 };
 
 struct UniformBufferObject {
-    glm::mat4 model;
-    glm::mat4 view;
-    glm::mat4 proj;
+    alignas(16) glm::mat4 model;
+    alignas(16) glm::mat4 view;
+    alignas(16) glm::mat4 proj;
 };
 
 const std::vector<Vertex> vertices = {
@@ -229,7 +229,7 @@ class HelloTriangleApplication {
             rasterizer.setDepthClampEnable(vk::False)
                       .setRasterizerDiscardEnable(vk::False)
                       .setPolygonMode(vk::PolygonMode::eFill)
-                      .setCullMode(vk::CullModeFlagBits::eBack)
+                      //.setCullMode(vk::CullModeFlagBits::eBack)
                       .setFrontFace(vk::FrontFace::eCounterClockwise)
                       .setDepthBiasEnable(vk::False)
                       .setLineWidth(1.0f);
@@ -474,6 +474,7 @@ class HelloTriangleApplication {
                 //command buffer dynamic state
                 graphicsCommandBuffers[frameIndex].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapchainExtent.width),static_cast<float>(swapchainExtent.height), 0.0f, 1.0f));
                 graphicsCommandBuffers[frameIndex].setScissor(0, vk::Rect2D(vk::Offset2D(0,0), swapchainExtent));
+
                 graphicsCommandBuffers[frameIndex].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[frameIndex], nullptr);
                 graphicsCommandBuffers[frameIndex].drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
             //end rendering
@@ -756,10 +757,10 @@ class HelloTriangleApplication {
             float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
             UniformBufferObject ubo{};
-            ubo.model = rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-            ubo.view = lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+            ubo.model = rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            ubo.view = lookAt(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
             ubo.proj =
-                    glm::perspective(glm::radians(45.0f), static_cast<float>(swapchainExtent.width) / static_cast<float>(swapchainExtent.height), 0.1f, 10.0f);
+                    glm::perspective(glm::radians(45.0f), static_cast<float>(swapchainExtent.width) /static_cast<float>(swapchainExtent.height) , 0.1f, 10.0f);
             ubo.proj[1][1] *= -1;
 
             memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
