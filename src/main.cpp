@@ -1,3 +1,4 @@
+#include "vulkan/vulkan.hpp"
 #include <iostream>
 #include <stdexcept>
 #include <cassert>
@@ -116,6 +117,8 @@ class HelloTriangleApplication {
         vk::raii::DeviceMemory                   vertexBufferMemory   = nullptr;
         vk::raii::Buffer                         indexBuffer          = nullptr;
         vk::raii::DeviceMemory                   indexBufferMemory    = nullptr;
+        vk::raii::Image                          textureImage         = nullptr;
+        vk::raii::DeviceMemory                   textureImageMemory   = nullptr; 
 
         std::vector<vk::raii::Buffer>            uniformBuffers;
         std::vector<vk::raii::DeviceMemory>      uniformBuffersMemory;
@@ -161,6 +164,7 @@ class HelloTriangleApplication {
             createDescriptorSetLayout();
             createGraphicsPipeline();
             createCommandPools();
+            createTextureImage();
             createVertexBuffer();
             createIndexBuffer();
             createUniformBuffers();
@@ -344,20 +348,85 @@ class HelloTriangleApplication {
             return {std::move(buffer), std::move(bufferMemory)};
         }
 
-        void copyBuffer(vk::raii::Buffer & srcBuffer, vk::raii::Buffer & desBuffer, vk::DeviceSize size){
+        std::pair<vk::raii::Image, vk::raii::DeviceMemory> createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::SharingMode mode = vk::SharingMode::eExclusive, const std::vector<uint32_t>& queueFamilies = {}){
+            vk::ImageCreateInfo imageInfo;
+            imageInfo.setExtent({width, height, 1}).setFormat(format).setTiling(tiling).setUsage(usage).setSharingMode(mode)
+                     .setImageType(vk::ImageType::e2D).setMipLevels(1).setArrayLayers(1);
+            if(mode == vk::SharingMode::eConcurrent){
+                imageInfo.setQueueFamilyIndices(queueFamilies);
+            }
+                vk::raii::Image      image = vk::raii::Image(device, imageInfo);
+
+            vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
+            vk::MemoryAllocateInfo memAllocateInfo;
+            memAllocateInfo.setAllocationSize(memRequirements.size)
+                           .setMemoryTypeIndex(findMemoryType(memRequirements.memoryTypeBits, properties));
+                vk::raii::DeviceMemory imageMemory = vk::raii::DeviceMemory(device, memAllocateInfo);
+            image.bindMemory(*imageMemory, 0);
+
+            return {std::move(image), std::move(imageMemory)};
+        }
+
+        vk::raii::CommandBuffer beginSingleTimeCommands(){
             vk::CommandBufferAllocateInfo allocInfo;
             allocInfo.setCommandPool(transientCommandPool).setLevel(vk::CommandBufferLevel::ePrimary).setCommandBufferCount(1);
-            vk::raii::CommandBuffer commandCopyBuffer = std::move(device.allocateCommandBuffers(allocInfo).front());
+            vk::raii::CommandBuffer commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
             //record command
-            commandCopyBuffer.begin(vk::CommandBufferBeginInfo().setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
-            commandCopyBuffer.copyBuffer(*srcBuffer, *desBuffer, vk::BufferCopy(0, 0, size));
-            commandCopyBuffer.end();
+            vk::CommandBufferBeginInfo beginInfo; beginInfo.setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
+            commandBuffer.begin(beginInfo);
+
+            return std::move(commandBuffer);
+        }
+
+        void endSingleTimeCommands(vk::raii::CommandBuffer &&commandBuffer){
+            commandBuffer.end();
             //wait for submit
             vk::FenceCreateInfo fenceInfo;
-            vk::raii::Fence transferFence(device, fenceInfo);
+            vk::raii::Fence commandFence(device, fenceInfo);
 
-            transferQueue.submit(vk::SubmitInfo().setCommandBuffers(*commandCopyBuffer), *transferFence);
-            (void)device.waitForFences({*transferFence}, VK_TRUE, UINT64_MAX);
+            vk::SubmitInfo submitInfo;
+            submitInfo.setCommandBuffers(*commandBuffer);
+            transferQueue.submit(submitInfo, commandFence);
+            (void)device.waitForFences({commandFence}, VK_TRUE, UINT64_MAX);
+
+        }
+
+        void copyBuffer(vk::raii::Buffer & srcBuffer, vk::raii::Buffer & desBuffer, vk::DeviceSize size){
+            vk::raii::CommandBuffer commandCopyBuffer = beginSingleTimeCommands();
+            commandCopyBuffer.copyBuffer(*srcBuffer, *desBuffer, vk::BufferCopy(0, 0, size));
+            endSingleTimeCommands(std::move(commandCopyBuffer));
+        }
+
+        void createTextureImage(){
+            int            texWidth, texHeight, texChannel;
+            stbi_uc       *pixels = stbi_load("../textures/avatar.jpg", &texWidth, &texHeight, &texChannel, STBI_rgb_alpha);
+            vk::DeviceSize imageSize = texWidth * texHeight * 4;
+            if(!pixels){
+                throw std::runtime_error("failed to load texture image! ");
+            }
+
+            auto [stagingBuffer, stagingBufferMemory] = 
+                    createBuffer(
+                        imageSize,
+                        vk::BufferUsageFlagBits::eTransferSrc,
+                        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+                        vk::SharingMode::eExclusive
+            );
+            void *data = stagingBufferMemory.mapMemory(0, imageSize);
+            memcpy(data, pixels, imageSize);
+            stagingBufferMemory.unmapMemory();
+            stbi_image_free(pixels);
+
+            std::tie(textureImage, textureImageMemory) = 
+                        createImage(
+                            texWidth, texHeight,
+                            vk::Format::eR8G8B8A8Srgb,
+                            vk::ImageTiling::eOptimal,
+                            vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+                            vk::MemoryPropertyFlagBits::eDeviceLocal,
+                            vk::SharingMode::eConcurrent,
+                            {graphicsQueueIndex, transferQueueIndex}
+            );
         }
 
         void createVertexBuffer(){
