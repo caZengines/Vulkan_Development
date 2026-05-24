@@ -367,9 +367,9 @@ class HelloTriangleApplication {
             return {std::move(image), std::move(imageMemory)};
         }
 
-        vk::raii::CommandBuffer beginSingleTimeCommands(){
+        vk::raii::CommandBuffer beginSingleTimeCommands(vk::raii::CommandPool &commandPool){
             vk::CommandBufferAllocateInfo allocInfo;
-            allocInfo.setCommandPool(transientCommandPool).setLevel(vk::CommandBufferLevel::ePrimary).setCommandBufferCount(1);
+            allocInfo.setCommandPool(commandPool).setLevel(vk::CommandBufferLevel::ePrimary).setCommandBufferCount(1);
             vk::raii::CommandBuffer commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
             //record command
             vk::CommandBufferBeginInfo beginInfo; beginInfo.setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
@@ -378,7 +378,7 @@ class HelloTriangleApplication {
             return std::move(commandBuffer);
         }
 
-        void endSingleTimeCommands(vk::raii::CommandBuffer &&commandBuffer){
+        void endSingleTimeCommands(vk::raii::CommandBuffer &&commandBuffer, vk::raii::Queue &&queue){
             commandBuffer.end();
             //wait for submit
             vk::FenceCreateInfo fenceInfo;
@@ -386,15 +386,15 @@ class HelloTriangleApplication {
 
             vk::SubmitInfo submitInfo;
             submitInfo.setCommandBuffers(*commandBuffer);
-            transferQueue.submit(submitInfo, commandFence);
+            queue.submit(submitInfo, commandFence);
             (void)device.waitForFences({commandFence}, VK_TRUE, UINT64_MAX);
 
         }
 
         void copyBuffer(vk::raii::Buffer & srcBuffer, vk::raii::Buffer & desBuffer, vk::DeviceSize size){
-            vk::raii::CommandBuffer commandCopyBuffer = beginSingleTimeCommands();
+            vk::raii::CommandBuffer commandCopyBuffer = beginSingleTimeCommands(transientCommandPool);
             commandCopyBuffer.copyBuffer(*srcBuffer, *desBuffer, vk::BufferCopy(0, 0, size));
-            endSingleTimeCommands(std::move(commandCopyBuffer));
+            endSingleTimeCommands(std::move(commandCopyBuffer), std::move(transferQueue));
         }
 
         void copyBufferToImage(vk::raii::CommandBuffer &commandBuffer, const vk::raii::Buffer &buffer, vk::raii::Image &image, uint32_t width, uint32_t height){
@@ -434,15 +434,13 @@ class HelloTriangleApplication {
                             vk::Format::eR8G8B8A8Srgb,
                             vk::ImageTiling::eOptimal,
                             vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-                            vk::MemoryPropertyFlagBits::eDeviceLocal,
-                            vk::SharingMode::eConcurrent,
-                            {graphicsQueueIndex, transferQueueIndex}
+                            vk::MemoryPropertyFlagBits::eDeviceLocal
             );
-            vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands();
+            vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands(graphicsCommandPool);
             transitionImageLayout(commandBuffer, textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
             copyBufferToImage(commandBuffer, stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
             transitionImageLayout(commandBuffer, textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-            endSingleTimeCommands(std::move(commandBuffer));
+            endSingleTimeCommands(std::move(commandBuffer), std::move(graphicsQueue));
         }
 
         void createVertexBuffer(){
