@@ -44,8 +44,8 @@ constexpr bool enableValidationLayers = true;
 #endif
 
 struct Vertex {
-    glm::vec2 position;
-    glm::vec3 color;
+    glm::vec2 pos;
+    glm::vec2 texCoord;
 
     static vk::VertexInputBindingDescription getBindingDescription() {
         vk::VertexInputBindingDescription description;
@@ -55,11 +55,11 @@ struct Vertex {
     }
     static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescription() {
         vk::VertexInputAttributeDescription posAttribute;
-        posAttribute.setLocation(0).setFormat(vk::Format::eR32G32Sfloat).setOffset(offsetof(Vertex, position));
-        vk::VertexInputAttributeDescription colorAttribute;
-        colorAttribute.setLocation(1).setFormat(vk::Format::eR32G32B32Sfloat).setOffset(offsetof(Vertex, color));
+        posAttribute.setLocation(0).setFormat(vk::Format::eR32G32Sfloat).setOffset(offsetof(Vertex, pos));
+        vk::VertexInputAttributeDescription uvAttribute;
+        uvAttribute.setLocation(1).setFormat(vk::Format::eR32G32Sfloat).setOffset(offsetof(Vertex, texCoord));
 
-        return std::array<vk::VertexInputAttributeDescription, 2>{posAttribute, colorAttribute};
+        return {posAttribute, uvAttribute};
     }
 };
 
@@ -70,10 +70,10 @@ struct UniformBufferObject {
 };
 
 const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f},{1.0f, 1.0f, 1.0f}}
+    {{-0.5f, -0.5f}, {0.0f, 1.0f}},
+    {{0.5f, -0.5f}, {1.0f, 1.0f}},
+    {{0.5f, 0.5f}, {1.0f, 0.0f}},
+    {{-0.5f, 0.5f}, {0.0f, 0.0f}}
 };
 
 const std::vector<uint32_t> indices = {
@@ -187,11 +187,12 @@ class HelloTriangleApplication {
         }
 
         void createDescriptorSetLayout(){
-            vk::DescriptorSetLayoutBinding uboLayoutBinding;
-            uboLayoutBinding.setBinding(0).setDescriptorType(vk::DescriptorType::eUniformBuffer)
-                            .setDescriptorCount(1).setStageFlags(vk::ShaderStageFlagBits::eVertex);
+            std::array<vk::DescriptorSetLayoutBinding, 2> bindings{
+                vk::DescriptorSetLayoutBinding().setBinding(0).setDescriptorType(vk::DescriptorType::eUniformBuffer).setDescriptorCount(1).setStageFlags(vk::ShaderStageFlagBits::eVertex),
+                vk::DescriptorSetLayoutBinding().setBinding(1).setDescriptorType(vk::DescriptorType::eCombinedImageSampler).setDescriptorCount(1).setStageFlags(vk::ShaderStageFlagBits::eFragment)
+            };
             vk::DescriptorSetLayoutCreateInfo layoutInfo;
-            layoutInfo.setBindings(uboLayoutBinding);
+            layoutInfo.setBindings(bindings);
 
             descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
         }
@@ -300,8 +301,10 @@ class HelloTriangleApplication {
         }
 
         void createDescriptorPool(){
-            vk::DescriptorPoolSize poolSize;
-            poolSize.setType(vk::DescriptorType::eUniformBuffer).setDescriptorCount(MAX_FRAMES_IN_FLIGHT);
+            std::array<vk::DescriptorPoolSize, 2> poolSize{
+                vk::DescriptorPoolSize().setType(vk::DescriptorType::eUniformBuffer).setDescriptorCount(MAX_FRAMES_IN_FLIGHT),
+                vk::DescriptorPoolSize().setType(vk::DescriptorType::eCombinedImageSampler).setDescriptorCount(MAX_FRAMES_IN_FLIGHT)
+            };
             vk::DescriptorPoolCreateInfo poolInfo;
             poolInfo.setFlags(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet).setMaxSets(MAX_FRAMES_IN_FLIGHT).setPoolSizes(poolSize);
 
@@ -318,14 +321,15 @@ class HelloTriangleApplication {
             for(size_t i = 0 ; i < MAX_FRAMES_IN_FLIGHT ; ++i){
                 vk::DescriptorBufferInfo bufferInfo;
                 bufferInfo.setBuffer(uniformBuffers[i]).setOffset(0).setRange(sizeof(UniformBufferObject));
-                vk::WriteDescriptorSet descriptorWrite;
-                descriptorWrite.setDstSet(descriptorSets[i])
-                               .setDstBinding(0)
-                               .setDstArrayElement(0)
-                               .setDescriptorType(vk::DescriptorType::eUniformBuffer)
-                               .setBufferInfo(bufferInfo);
+                vk::DescriptorImageInfo imageInfo;
+                imageInfo.setSampler(textureSampler).setImageView(textureImageView).setImageLayout(vk::ImageLayout::eShaderReadOnlyOptimal);
 
-                device.updateDescriptorSets(descriptorWrite, {});
+                std::array<vk::WriteDescriptorSet, 2> descriptorWrites{
+                    vk::WriteDescriptorSet().setDstSet(descriptorSets[i]).setDstBinding(0).setDstArrayElement(0).setDescriptorType(vk::DescriptorType::eUniformBuffer).setBufferInfo(bufferInfo),
+                    vk::WriteDescriptorSet().setDstSet(descriptorSets[i]).setDstBinding(1).setDstArrayElement(0).setDescriptorType(vk::DescriptorType::eCombinedImageSampler).setImageInfo(imageInfo)
+                };
+
+                device.updateDescriptorSets(descriptorWrites, {});
             }
         }
 
@@ -899,7 +903,7 @@ class HelloTriangleApplication {
 
             UniformBufferObject ubo{};
             ubo.model = rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-            ubo.view = lookAt(glm::vec3(0.0f, 0.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+            ubo.view = lookAt(glm::vec3(0.0f, 0.0f, -2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
             ubo.proj =
                     glm::perspective(glm::radians(45.0f), static_cast<float>(swapchainExtent.width) /static_cast<float>(swapchainExtent.height) , 0.1f, 10.0f);
             ubo.proj[1][1] *= -1;
