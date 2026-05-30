@@ -234,8 +234,7 @@ class HelloTriangleApplication {
                 vk::DynamicState::eViewport, vk::DynamicState::eScissor
             };
             vk::PipelineDynamicStateCreateInfo dynamicState;
-            dynamicState.setDynamicStateCount(static_cast<uint32_t>(dynamicStates.size()))
-                        .setPDynamicStates(dynamicStates.data());
+            dynamicState.setDynamicStates(dynamicStates);
             vk::PipelineViewportStateCreateInfo viewportState;
             viewportState.setViewportCount(1).setScissorCount(1);
 
@@ -1191,7 +1190,11 @@ class HelloTriangleApplication {
             throw std::runtime_error("Failed to load file: " + filename);
           }
 
-          std::vector<char> buffer(file.tellg());
+          const auto endPos = file.tellg();
+          if(endPos == -1){
+            throw std::runtime_error("Failed to get file size: " + filename);
+          }
+          std::vector<char> buffer(endPos);
           file.seekg(0, std::ios::beg);
           file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
           if (!file) {
