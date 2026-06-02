@@ -355,11 +355,11 @@ class HelloTriangleApplication {
             }
         }
 
-        std::pair<vk::raii::Buffer, vk::raii::DeviceMemory> createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::SharingMode mode = vk::SharingMode::eExclusive, const std::vector<uint32_t>& queueFamilyIndecies = {}){
+        std::pair<vk::raii::Buffer, vk::raii::DeviceMemory> createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::SharingMode mode = vk::SharingMode::eExclusive, const std::vector<uint32_t>& queueFamilyIndicies = {}){
             vk::BufferCreateInfo bufferInfo;
             bufferInfo.setSize(size).setUsage(usage).setSharingMode(mode);
             if(mode == vk::SharingMode::eConcurrent){
-                bufferInfo.setQueueFamilyIndices(queueFamilyIndecies);
+                bufferInfo.setQueueFamilyIndices(queueFamilyIndicies);
             }
                 vk::raii::Buffer       buffer = vk::raii::Buffer(device, bufferInfo);
             
@@ -403,7 +403,7 @@ class HelloTriangleApplication {
             return std::move(commandBuffer);
         }
 
-        void endSingleTimeCommands(vk::raii::CommandBuffer &&commandBuffer, vk::raii::Queue &&queue){
+        void endSingleTimeCommands(vk::raii::CommandBuffer &&commandBuffer, vk::raii::Queue &queue){
             commandBuffer.end();
             //wait for submit
             vk::FenceCreateInfo fenceInfo;
@@ -419,7 +419,7 @@ class HelloTriangleApplication {
         void copyBuffer(vk::raii::Buffer & srcBuffer, vk::raii::Buffer & desBuffer, vk::DeviceSize size){
             vk::raii::CommandBuffer commandCopyBuffer = beginSingleTimeCommands(transientCommandPool);
             commandCopyBuffer.copyBuffer(*srcBuffer, *desBuffer, vk::BufferCopy(0, 0, size));
-            endSingleTimeCommands(std::move(commandCopyBuffer), std::move(transferQueue));
+            endSingleTimeCommands(std::move(commandCopyBuffer), transferQueue);
         }
 
         void copyBufferToImage(vk::raii::CommandBuffer &commandBuffer, const vk::raii::Buffer &buffer, vk::raii::Image &image, uint32_t width, uint32_t height) const{
@@ -473,9 +473,9 @@ class HelloTriangleApplication {
             vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands(graphicsCommandPool);
             transitionImageLayout(commandBuffer, textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, mipLevels);
             copyBufferToImage(commandBuffer, stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+            endSingleTimeCommands(std::move(commandBuffer), graphicsQueue);
             //transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating mipmaps
             generateMipMaps(textureImage, vk::Format::eR8G8B8A8Srgb, texWidth, texHeight, mipLevels);
-            endSingleTimeCommands(std::move(commandBuffer), std::move(graphicsQueue));
         }
 
         void generateMipMaps(vk::raii::Image &image, vk::Format imageFormat, uint32_t texWidth_, uint32_t texHeight_, uint32_t mipLevels_){
@@ -496,7 +496,7 @@ class HelloTriangleApplication {
             uint32_t mipWidth  = texWidth_;
             uint32_t mipHeight = texHeight_;
             for(uint32_t i = 1 ; i < mipLevels_ ;++i){
-                barrier.subresourceRange.setBaseArrayLayer(i - 1);
+                barrier.subresourceRange.setBaseMipLevel(i - 1);
                 barrier.setOldLayout(vk::ImageLayout::eTransferDstOptimal).setNewLayout(vk::ImageLayout::eTransferSrcOptimal);
                 barrier.setSrcAccessMask(vk::AccessFlagBits::eTransferWrite).setDstAccessMask(vk::AccessFlagBits::eTransferRead);
 
@@ -510,15 +510,22 @@ class HelloTriangleApplication {
                 vk::ImageBlit blit; blit.setSrcSubresource({vk::ImageAspectFlagBits::eColor, i-1, 0, 1}).setSrcOffsets(offsets)
                                         .setDstSubresource({vk::ImageAspectFlagBits::eColor, i, 0, 1}).setDstOffsets(dstOffsets);
                 commandBuffer.blitImage(image, vk::ImageLayout::eTransferSrcOptimal, image, vk::ImageLayout::eTransferDstOptimal, {blit}, vk::Filter::eLinear);
+
+                //barrier.subresourceRange.setBaseMipLevel(i - 1);
+                barrier.setOldLayout(vk::ImageLayout::eTransferSrcOptimal).setNewLayout(vk::ImageLayout::eShaderReadOnlyOptimal);
+                barrier.setSrcAccessMask(vk::AccessFlagBits::eTransferRead).setDstAccessMask(vk::AccessFlagBits::eShaderRead);
+                
+                commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader, {}, {}, {}, barrier);
+
                 if(mipWidth  > 1) mipWidth  /= 2;
                 if(mipHeight > 1) mipHeight /= 2;
             }
-            barrier.subresourceRange.setBaseArrayLayer(mipLevels_ - 1);
+            barrier.subresourceRange.setBaseMipLevel(mipLevels_ - 1);
             barrier.setOldLayout(vk::ImageLayout::eTransferDstOptimal).setNewLayout(vk::ImageLayout::eShaderReadOnlyOptimal);
             barrier.setSrcAccessMask(vk::AccessFlagBits::eTransferWrite).setDstAccessMask(vk::AccessFlagBits::eShaderRead);
             commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader, {}, {}, {}, barrier);
             
-            endSingleTimeCommands(std::move(commandBuffer), std::move(graphicsQueue));
+            endSingleTimeCommands(std::move(commandBuffer), graphicsQueue);
         }
 
         void createTextureImageView(){
@@ -539,7 +546,8 @@ class HelloTriangleApplication {
             vk::SamplerCreateInfo samplerInfo;
             samplerInfo.setMagFilter(vk::Filter::eLinear).setMinFilter(vk::Filter::eLinear)
                        .setAddressModeU(vk::SamplerAddressMode::eRepeat).setAddressModeV(vk::SamplerAddressMode::eRepeat).setAddressModeW(vk::SamplerAddressMode::eRepeat)
-                       .setMipmapMode(vk::SamplerMipmapMode::eLinear).setMipLodBias(0.0f).setMaxLod(0.0f).setMinLod(0.0f)
+                       .setMipmapMode(vk::SamplerMipmapMode::eLinear)
+                       .setMipLodBias(0.0f).setMaxLod(vk::LodClampNone).setMinLod(0.0f)
                        .setAnisotropyEnable(vk::True)
                        .setMaxAnisotropy(properties.limits.maxSamplerAnisotropy)
                        .setCompareEnable(false).setCompareOp(vk::CompareOp::eAlways)
@@ -788,10 +796,10 @@ class HelloTriangleApplication {
                                                    .setImageMemoryBarriers(barrier);
                                     graphicsCommandBuffers[frameIndex].pipelineBarrier2(dependency_info);
         }
-        void transitionImageLayout(vk::raii::CommandBuffer &commandBuffer, const vk::raii::Image &image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, uint32_t mipLevels) const{
+        void transitionImageLayout(vk::raii::CommandBuffer &commandBuffer, const vk::raii::Image &image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, uint32_t mipLevels_) const{
             vk::ImageMemoryBarrier barrier;
             vk::ImageSubresourceRange subresourceRange;
-            subresourceRange.setAspectMask(vk::ImageAspectFlagBits::eColor).setLayerCount(1).setLevelCount(mipLevels);
+            subresourceRange.setAspectMask(vk::ImageAspectFlagBits::eColor).setLayerCount(1).setLevelCount(mipLevels_);
             barrier.setOldLayout(oldLayout).setNewLayout(newLayout)
                    .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored).setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
                    .setImage(image).setSubresourceRange(subresourceRange);
